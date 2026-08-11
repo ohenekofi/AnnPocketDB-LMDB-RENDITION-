@@ -1,0 +1,28 @@
+# AnnPocketDb :: ci/tsan.supp
+#
+# ThreadSanitizer suppressions. This file should stay EMPTY (or very nearly
+# so) for a project at AnnPocketDb's stage. A suppression here means "we've
+# investigated this report and decided it's a false positive or an accepted,
+# understood non-issue" -- not "this is annoying, make it go away."
+#
+# Do NOT add a suppression for anything touching:
+#   - core/free_list.*
+#   - core/page_manager.*
+#   - core/reader_table.*
+#   - btree/btree.cpp, btree/cursor.cpp
+#   - txn/transaction.*
+# A TSan report in any of these is exactly the class of bug this whole
+# effort exists to catch. Suppressing one here defeats the purpose -- fix
+# the race or, if it's genuinely a false positive, add a narrowly-scoped
+# race:/deadlock: entry with a comment explaining precisely why it's benign
+# (e.g. "the second access is provably ordered by X, TSan just can't see
+# it through Y").
+#
+# Third-party code TSan sometimes flags spuriously (safe to suppress once
+# confirmed against the upstream project's own TSan status):
+#
+# race:libc.so
+# race:std::__1::__libcpp_atomic_refcount_increment
+
+# (intentionally empty -- add entries above this line with a comment per
+# entry explaining why, and a link/reference to the investigation)

@@ -1,0 +1,37 @@
+name: ci
+
+# Plain build + test gate for every push/PR -- no sanitizers (see
+# sanitizers.yml for that, a separate, heavier workflow). This is the fast
+# checkmark ordinary contributors' PRs get: does it build and pass the full
+# test suite on the two primary platforms, with default CMake options (every
+# feature module ON).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-msvc
+          - os: ubuntu-latest
+            name: linux-gcc
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --config Debug -j
+
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure --timeout 600

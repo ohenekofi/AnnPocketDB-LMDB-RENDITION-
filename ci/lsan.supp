@@ -1,0 +1,13 @@
+# AnnPocketDb :: ci/lsan.supp
+#
+# LeakSanitizer suppressions (paired with ASan, detect_leaks=1). Same policy
+# as tsan.supp: stay empty unless a specific, investigated, third-party leak
+# needs silencing. A leak reported inside annpocketdb_kernel or
+# annpocketdb_features is a real bug -- most likely a missing release on an
+# error path (e.g. a page buffer allocated before a mid-function CHECK/return
+# that skips its own cleanup). Fix it there; don't suppress it here.
+#
+# Example of the only kind of entry that belongs in this file:
+# leak:libfontconfig.so
+
+# (intentionally empty)

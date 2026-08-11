@@ -1,0 +1,191 @@
+name: sanitizers
+
+# Two tiers, deliberately separate jobs rather than one job with a knob:
+#
+#   1. "sanitize" -- runs on every push/PR. Fast (a few minutes): builds
+#      under TSan and under ASan+UBSan, runs the full fast test suite
+#      (ANNPOCKETDB_SOAK_SECONDS defaults to a short smoke value) under
+#      each. This is the PR-blocking gate.
+#
+#   2. "soak-nightly" -- runs on a schedule (and can be dispatched by hand).
+#      Long-running (up to the job's own timeout): same matrix, but with
+#      the `soak` ctest label included and ANNPOCKETDB_SOAK_SECONDS set to
+#      a real duration. This is where the "only a real race detector under
+#      sustained load catches it" property actually gets exercised -- a
+#      thirty-second PR check has scheduling entropy, but nowhere near
+#      what a multi-hour run does.
+#
+# Both jobs fail the whole run (halt_on_error=1 in the sanitizer env, see
+# cmake/Sanitizers.cmake) on the first detected issue rather than limping
+# through and hiding a second bug behind the first.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 02:17 UTC daily -- odd minute deliberately, avoid the top-of-hour
+    # GitHub Actions scheduling pile-up.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: "Override soak duration (seconds) for a manual run"
+        required: false
+        default: "3600"
+
+env:
+  # Keep in sync with cmake/Sanitizers.cmake's ANNPOCKETDB_*_OPTIONS defaults;
+  # duplicated here (rather than relying solely on the CMake-set
+  # set_tests_properties ENVIRONMENT) so a `ctest` invocation run directly in
+  # this workflow's shell -- outside the CMake-managed per-test environment,
+  # e.g. if someone adds a manual reproduction step -- still gets safe
+  # defaults.
+  TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1:history_size=7:die_after_fork=0"
+  ASAN_OPTIONS: "halt_on_error=1:detect_leaks=1:strict_string_checks=1:check_initialization_order=1:detect_stack_use_after_return=1"
+  UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+
+jobs:
+  sanitize:
+    name: ${{ matrix.sanitizer }} (fast)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: thread
+            cc: clang
+            cxx: clang++
+          - sanitizer: address+undefined
+            cc: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang + Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build
+
+      - name: Configure (${{ matrix.sanitizer }})
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DANNPOCKETDB_SANITIZE=${{ matrix.sanitizer }} \
+            -DANNPOCKETDB_WITH_ENCRYPTION=ON \
+            -DANNPOCKETDB_WITH_BACKUP=ON
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test (fast suite, soak excluded)
+        env:
+          ANNPOCKETDB_SOAK_SECONDS: "15"   # smoke-length even for tests that check this var directly
+        run: |
+          ctest --test-dir build --output-on-failure --timeout 300 -LE soak
+
+      - name: Upload sanitizer logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-logs-${{ matrix.sanitizer }}
+          path: |
+            build/Testing/Temporary/LastTest.log
+          retention-days: 14
+
+  soak-nightly:
+    name: ${{ matrix.sanitizer }} (soak)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: thread
+            cc: clang
+            cxx: clang++
+          - sanitizer: address+undefined
+            cc: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang + Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build
+
+      - name: Configure (${{ matrix.sanitizer }})
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DANNPOCKETDB_SANITIZE=${{ matrix.sanitizer }} \
+            -DANNPOCKETDB_WITH_ENCRYPTION=ON \
+            -DANNPOCKETDB_WITH_BACKUP=ON
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Fast suite first (fail early, cheaply, before spending the soak budget)
+        env:
+          ANNPOCKETDB_SOAK_SECONDS: "15"
+        run: ctest --test-dir build --output-on-failure --timeout 300 -LE soak
+
+      - name: Soak suite
+        env:
+          ANNPOCKETDB_SOAK_SECONDS: ${{ github.event.inputs.soak_seconds || '3600' }}
+          ANNPOCKETDB_SOAK_WRITERS: "6"
+          ANNPOCKETDB_SOAK_READERS: "6"
+        run: |
+          ctest --test-dir build --output-on-failure --timeout 4000 -L soak
+
+      - name: Upload sanitizer logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-logs-${{ matrix.sanitizer }}
+          path: |
+            build/Testing/Temporary/LastTest.log
+          retention-days: 30
+
+      - name: Notify on soak failure
+        if: failure()
+        run: |
+          echo "::error::Nightly soak failed under ${{ matrix.sanitizer }} -- this is exactly the class of bug the fast PR gate cannot catch. Do not treat a green fast-tier run as multi-process/MVCC correctness proof until this job is also green." >> "$GITHUB_STEP_SUMMARY"
+
+  windows-asan:
+    name: address (windows, fast)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (MSVC ASan)
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DANNPOCKETDB_SANITIZE=address `
+            -DANNPOCKETDB_WITH_ENCRYPTION=ON `
+            -DANNPOCKETDB_WITH_BACKUP=ON
+
+      - name: Build
+        run: cmake --build build --config Debug -j
+
+      - name: Test (fast suite, soak excluded)
+        env:
+          ANNPOCKETDB_SOAK_SECONDS: "15"
+        run: ctest --test-dir build -C Debug --output-on-failure --timeout 300 -LE soak
+        # Note: no ThreadSanitizer leg on Windows -- MSVC TSan is still
+        # preview-only. The Linux `thread` matrix leg above is the real
+        # multi-process/MVCC race gate; this job exists to catch
+        # Windows-specific memory-safety issues (the remap-under-writer-lock
+        # growth path in particular, which has no POSIX equivalent).

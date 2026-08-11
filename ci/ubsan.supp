@@ -1,0 +1,14 @@
+# AnnPocketDb :: ci/ubsan.supp
+#
+# UBSan suppressions. UBSan is cheap and precise (integer overflow,
+# misaligned loads, invalid enum values, signed-shift UB) -- there is almost
+# never a legitimate reason to suppress a hit inside project code. If
+# something here fires inside the vendored Monocypher C source
+# (thirdparty/monocypher/monocypher.c), check first whether upstream already
+# has a documented "this is intentional, constant-time-safe UB" note before
+# suppressing; if so, reference it in the entry.
+#
+# Example:
+# signed-integer-overflow:thirdparty/monocypher/monocypher.c
+
+# (intentionally empty)

@@ -1,0 +1,25 @@
+{
+  "name": "annpocketdb",
+  "version": "0.1.0",
+  "description": "Node.js binding for AnnPocketDb embedded database",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp build",
+    "configure": "node-gyp configure",
+    "test": "jest --forceExit"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "bindings": "^1.5.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "node-gyp": "^10.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/test/**/*.test.js"]
+  },
+  "gypfile": true,
+  "license": "Apache-2.0"
+}

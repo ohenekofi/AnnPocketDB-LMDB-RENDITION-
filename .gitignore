@@ -1,0 +1,64 @@
+# CMake and C++ build artifacts
+build/
+out/
+bin/
+lib/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# C++ IDEs & Tooling
+.vs/
+.idea/
+.vscode/
+compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+.pytest_cache/
+*.egg-info/
+dist/
+bindings/python/build/
+
+# Node.js
+node_modules/
+bindings/nodejs/build/
+package-lock.json
+
+# Dart
+.dart_tool/
+.packages
+pubspec.lock
+bindings/dart/build/
+
+# Java
+target/
+*.class
+*.jar
+.gradle/
+bindings/java/build/
+
+# Go
+*.test
+bindings/go/go.sum
+
+# General / OS
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+tmp/
+temp/
