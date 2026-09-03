@@ -45,7 +45,10 @@ Result<Environment> Environment::open(const std::filesystem::path& path, const E
     Environment env;
     env.pm_ = pmResult.moveValue();
     env.tree_ = std::make_unique<btree::BTree>(*env.pm_);
-    env.subDbManager_ = std::make_unique<SubDatabaseManager>(*env.pm_, *env.tree_, options.maxNamedDatabases);
+    // subDbManager_ is constructed lazily, on first actual sub-database use
+    // (see Environment::ensureSubDbManager(), src/api/environment_subdatabase.cpp)
+    // -- not here, so that this kernel-tier open() path never needs a
+    // features-tier (SubDatabaseManager) symbol.
     env.options_ = options;
 
 #if defined(ANNPOCKETDB_WITH_WAL) && ANNPOCKETDB_WITH_WAL
@@ -82,11 +85,17 @@ Result<Environment> Environment::open(const std::filesystem::path& path, const E
 #endif
 
 
+#if defined(ANNPOCKETDB_WITH_CHANGEFEED)
     if (options.enableChangefeed) {
         auto cf = changefeed::createDurableChangeFeed(options.changefeedAsync);
         if (!cf) return cf.status();
         env.changeFeed_ = cf.moveValue();
     }
+#else
+    if (options.enableChangefeed) {
+        return Status::NotSupported("changefeed support was not built (ANNPOCKETDB_WITH_CHANGEFEED)");
+    }
+#endif
 
     return Result<Environment>(std::move(env));
 }
@@ -144,39 +153,6 @@ Status Environment::remove(ByteView key, core::SyncMode mode) {
 }
 
 
-Result<SubDatabase> Environment::createSubDatabase(const std::string& name, btree::DbFlags flags,
-                                                   core::SyncMode mode) {
-    if (options_.readOnly) return Status::ReadOnly("environment was opened read-only");
-    if (name.empty()) return Status::InvalidArgument("sub-database name empty");
-    if (name.find('\0') != std::string::npos) return Status::InvalidArgument("sub-database name contains NUL");
-
-    auto wt = beginWrite();
-    if (!wt) return wt.status();
-    txn::WriteTransaction wtxn = wt.moveValue();
-
-    auto created = subDbManager_->create(wtxn, name, flags);
-    if (!created) {
-        wtxn.abort();
-        return created.status();
-    }
-    SubDbHandle h = created.value();
-
-    // On failure, wtxn.commit() itself rolls the provisional handle back
-    // (see WriteTransaction::commit's sub-database export/rollback loop).
-    Status s = wtxn.commit(mode);
-    if (!s.ok()) return s;
-
-    std::uint32_t seq = subDbManager_->currentSequence(h);
-    return Result<SubDatabase>(SubDatabase(pm_.get(), tree_.get(), subDbManager_.get(), name, h, seq));
-}
-
-Result<SubDatabase> Environment::openSubDatabase(const std::string& name) {
-    auto h = subDbManager_->open(name);
-    if (!h) return h.status();
-    std::uint32_t seq = subDbManager_->currentSequence(h.value());
-    return Result<SubDatabase>(SubDatabase(pm_.get(), tree_.get(), subDbManager_.get(), name, h.value(), seq));
-}
-
 Status Environment::sync(bool force) {
     core::SyncMode mode = core::SyncMode::Durable;
     if (!force) {
@@ -188,132 +164,11 @@ Status Environment::sync(bool force) {
 
 std::size_t Environment::maxKeySize() const { return tree_->maxKeySize(); }
 
-Result<SubDatabase> Environment::openOrCreateSubDatabase(const std::string& name, btree::DbFlags flags,
-                                                          core::SyncMode mode) {
-    auto opened = openSubDatabase(name);
-    if (opened.ok()) return opened;
-    if (opened.status().code() != StatusCode::NotFound) return opened.status();
-    // Flags only apply at first creation -- matches LMDB's open_db()
-    // ignoring them for an already-existing database.
-    auto created = createSubDatabase(name, flags, mode);
-    if (created.ok()) return created;
-    // Lost a race with another writer that created it between our open()
-    // miss and this create() attempt: fall back to opening what they made.
-    if (created.status().code() == StatusCode::KeyExists) return openSubDatabase(name);
-    return created.status();
-}
-
-Result<std::vector<std::string>> Environment::listSubDatabases() {
-    auto rt = beginRead();
-    if (!rt) return rt.status();
-    txn::ReadTransaction rtxn = rt.moveValue();
-    return subDbManager_->list(rtxn);
-}
-
-Status Environment::dropSubDatabase(const std::string& name, core::SyncMode mode) {
-    if (options_.readOnly) return Status::ReadOnly("environment was opened read-only");
-
-    auto h = subDbManager_->open(name);
-    if (!h) return h.status();
-
-    auto wt = beginWrite();
-    if (!wt) return wt.status();
-    txn::WriteTransaction wtxn = wt.moveValue();
-
-    Status s = subDbManager_->drop(wtxn, h.value());
-    if (!s.ok()) {
-        wtxn.abort();
-        return s;
-    }
-    // On success, wtxn.commit() itself invalidates the handle for everyone
-    // (see WriteTransaction::commit's sub-database export loop, driven by
-    // the markSubDbDropped() call inside SubDatabaseManager::drop above).
-    return wtxn.commit(mode);
-}
-
-
-Result<blob::BlobRef> Environment::putBlob(ByteView key, ByteView data, core::SyncMode mode) {
-    auto wt = beginWrite();
-    if (!wt) return wt.status();
-    txn::WriteTransaction wtxn = wt.moveValue();
-
-    // Replace any previous blob chain bound to this key.
-    auto prev = wtxn.get(key);
-    if (prev.ok() && blob::isBlobRef(toByteView(prev.value()))) {
-        blob::BlobRef oldRef;
-        if (blob::decodeBlobRef(toByteView(prev.value()), oldRef).ok()) {
-            blob::BlobStore store(*pm_);
-            Status rs = store.remove(oldRef.id, wtxn.txnId());
-            if (!rs.ok()) {
-                wtxn.abort();
-                return rs;
-            }
-        }
-    }
-
-    blob::BlobStore store(*pm_);
-    auto refR = store.put(data, wtxn.txnId());
-    if (!refR) {
-        wtxn.abort();
-        return refR.status();
-    }
-    ByteBuffer refVal = blob::encodeBlobRef(refR.value());
-    Status s = wtxn.put(key, toByteView(refVal), true);
-    if (!s.ok()) {
-        wtxn.abort();
-        return s;
-    }
-    s = wtxn.commit(mode);
-    if (!s.ok()) return s;
-    return Result<blob::BlobRef>(refR.value());
-}
-
-Result<ByteBuffer> Environment::getBlob(ByteView key) {
-    auto g = get(key);
-    if (!g) return g.status();
-    ByteView val = toByteView(g.value());
-    if (!blob::isBlobRef(val)) {
-        // Inline value — return as-is for convenience.
-        return Result<ByteBuffer>(g.moveValue());
-    }
-    blob::BlobRef ref;
-    Status s = blob::decodeBlobRef(val, ref);
-    if (!s.ok()) return s;
-    blob::BlobStore store(*pm_);
-    return store.get(ref.id);
-}
-
-Status Environment::removeBlob(ByteView key, core::SyncMode mode) {
-    auto wt = beginWrite();
-    if (!wt) return wt.status();
-    txn::WriteTransaction wtxn = wt.moveValue();
-
-    auto prev = wtxn.get(key);
-    if (!prev) {
-        wtxn.abort();
-        return prev.status();
-    }
-    if (blob::isBlobRef(toByteView(prev.value()))) {
-        blob::BlobRef ref;
-        Status s = blob::decodeBlobRef(toByteView(prev.value()), ref);
-        if (!s.ok()) {
-            wtxn.abort();
-            return s;
-        }
-        blob::BlobStore store(*pm_);
-        s = store.remove(ref.id, wtxn.txnId());
-        if (!s.ok()) {
-            wtxn.abort();
-            return s;
-        }
-    }
-    Status s = wtxn.remove(key);
-    if (!s.ok()) {
-        wtxn.abort();
-        return s;
-    }
-    return wtxn.commit(mode);
-}
+// createSubDatabase/openSubDatabase/openOrCreateSubDatabase/listSubDatabases/
+// dropSubDatabase now live in src/api/environment_subdatabase.cpp (features
+// tier); putBlob/getBlob/removeBlob now live in src/api/environment_blob.cpp
+// (features tier) -- see the top-level CMakeLists.txt comments and
+// environment_subdatabase.cpp's own header comment for why.
 
 Status Environment::rollbackPrepared() {
     if (!pm_) return Status::InvalidArgument("environment not open");

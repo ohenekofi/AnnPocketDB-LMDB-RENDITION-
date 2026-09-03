@@ -132,7 +132,7 @@ private:
     SharedLockHeader* header() const {
         return static_cast<SharedLockHeader*>(mapped_);
     }
-    SharedReaderSlot* slots() const {
+    SharedReaderSlot* readerSlots() const {
         return reinterpret_cast<SharedReaderSlot*>(
             static_cast<std::byte*>(mapped_) + sizeof(SharedLockHeader));
     }

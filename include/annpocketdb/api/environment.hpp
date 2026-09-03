@@ -223,6 +223,11 @@ public:
 private:
     Environment() = default;
 
+    // Lazily constructs subDbManager_ on first actual sub-database use
+    // (see src/api/environment_subdatabase.cpp for why this isn't done
+    // eagerly in open() anymore). A no-op if already constructed.
+    void ensureSubDbManager();
+
     std::unique_ptr<core::PageManager> pm_;
     std::unique_ptr<btree::BTree> tree_;
     std::unique_ptr<wal::Wal> wal_;

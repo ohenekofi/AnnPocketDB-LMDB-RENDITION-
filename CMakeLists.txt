@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # C is only needed for the vendored Monocypher source
 # (thirdparty/monocypher/monocypher.c) when ANNPOCKETDB_WITH_ENCRYPTION is on.
-project(AnnPocketDb VERSION 0.1.0 LANGUAGES CXX C)
+project(AnnPocketDb VERSION 0.1.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -66,6 +66,12 @@ set(KERNEL_SOURCES
   src/btree/cursor.cpp
   src/txn/transaction.cpp
   src/api/environment.cpp
+  # ChangeSink (not the rest of the changefeed module) is called directly
+  # from WriteTransaction::put/remove/commit above whenever a sink happens
+  # to be attached -- always compiled regardless of ANNPOCKETDB_WITH_
+  # CHANGEFEED, same reasoning as the WAL/changefeed block below. See
+  # change_sink.cpp's own header comment.
+  src/changefeed/change_sink.cpp
 )
 
 set(KERNEL_HEADERS
@@ -111,6 +117,29 @@ endif()
 if(ANNPOCKETDB_WITH_COMPRESSION)
   list(APPEND KERNEL_SOURCES src/compression/lz4_codec.cpp)
   list(APPEND KERNEL_HEADERS include/annpocketdb/compression/lz4_codec.hpp)
+endif()
+
+# WAL is called directly from PageManager::commit() (src/core/page_manager.cpp,
+# kernel tier) on its core commit path, not from an optional accessor -- so
+# like encryption/compression above, it must be part of the kernel tier
+# itself rather than the features tier below (a static archive must never
+# need a symbol from an archive that depends on it). Third deliberate
+# exception to "kernel has zero third-party deps" (WAL itself vendors
+# nothing third-party, so the *dependency-free* part of that claim still
+# holds -- only the kernel/features placement changes).
+if(ANNPOCKETDB_WITH_WAL)
+  list(APPEND KERNEL_SOURCES src/wal/record.cpp src/wal/wal.cpp)
+  list(APPEND KERNEL_HEADERS include/annpocketdb/wal/record.hpp include/annpocketdb/wal/wal.hpp)
+endif()
+
+# The rest of the changefeed module (delivery backends, DurableChangeFeed,
+# factories) -- ChangeSink itself (needed unconditionally, see above) is not
+# here, it's in change_sink.cpp. This part genuinely is optional: nothing
+# outside Environment::open() ever references it, and open() is guarded by
+# #if defined(ANNPOCKETDB_WITH_CHANGEFEED) (src/api/environment.cpp).
+if(ANNPOCKETDB_WITH_CHANGEFEED)
+  list(APPEND KERNEL_SOURCES src/changefeed/changefeed.cpp)
+  list(APPEND KERNEL_HEADERS include/annpocketdb/changefeed/changefeed.hpp)
 endif()
 
 add_library(annpocketdb_kernel STATIC ${KERNEL_SOURCES} ${KERNEL_HEADERS})
@@ -185,6 +214,14 @@ if(ANNPOCKETDB_WITH_COMPRESSION)
   target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_COMPRESSION=1)
 endif()
 
+if(ANNPOCKETDB_WITH_WAL)
+  target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_WAL=1)
+endif()
+
+if(ANNPOCKETDB_WITH_CHANGEFEED)
+  target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_CHANGEFEED=1)
+endif()
+
 add_library(AnnPocketDb::kernel ALIAS annpocketdb_kernel)
 
 # ---------------------------------------------------------------------------
@@ -198,10 +235,16 @@ set(FEATURE_LIBS annpocketdb_kernel)
 # Environment::documentStore() both depend on it unconditionally.
 list(APPEND FEATURE_SOURCES src/document/document.cpp)
 
-if(ANNPOCKETDB_WITH_WAL)
-  list(APPEND FEATURE_SOURCES src/wal/record.cpp src/wal/wal.cpp)
-  target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_WAL=1)
-endif()
+# environment_blob.cpp/environment_subdatabase.cpp are always compiled (like
+# document.cpp above), *not* gated behind ANNPOCKETDB_WITH_BLOB/_SUBDATABASE
+# -- Environment::putBlob/getBlob/removeBlob and the five sub-database
+# methods are declared unconditionally in environment.hpp, so something must
+# always define them. Each method internally #ifdefs on its own flag,
+# returning Status::NotSupported when that flag is off, matching the WAL
+# pattern in Environment::open(). blob_store.cpp/sub_database.cpp themselves
+# stay genuinely gated below -- nothing calls into them when their flag is
+# off.
+list(APPEND FEATURE_SOURCES src/api/environment_blob.cpp src/api/environment_subdatabase.cpp)
 
 if(ANNPOCKETDB_WITH_BLOB)
   list(APPEND FEATURE_SOURCES src/blob/blob_store.cpp)
@@ -221,11 +264,6 @@ endif()
 if(ANNPOCKETDB_WITH_QUERY)
   list(APPEND FEATURE_SOURCES src/query/query.cpp)
   target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_QUERY=1)
-endif()
-
-if(ANNPOCKETDB_WITH_CHANGEFEED)
-  list(APPEND FEATURE_SOURCES src/changefeed/changefeed.cpp)
-  target_compile_definitions(annpocketdb_kernel PUBLIC ANNPOCKETDB_WITH_CHANGEFEED=1)
 endif()
 
 if(ANNPOCKETDB_WITH_SUBDATABASE)

@@ -102,7 +102,7 @@ std::size_t InterprocessLock::readerCheck() {
 std::vector<InterprocessLock::ReaderSlotInfo> InterprocessLock::readerList() const {
     std::vector<ReaderSlotInfo> out;
     if (!mapped_) return out;
-    const SharedReaderSlot* s = slots();
+    const SharedReaderSlot* s = readerSlots();
     for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
         TxnId txn = s[i].txnId.load(std::memory_order_acquire);
         if (txn == 0) continue;
@@ -133,7 +133,7 @@ bool InterprocessLock::processAlive(std::uint64_t pid) {
 
 std::size_t InterprocessLock::clearDeadSlots() const {
     if (!mapped_) return 0;
-    SharedReaderSlot* s = slots();
+    SharedReaderSlot* s = readerSlots();
     std::size_t cleared = 0;
     for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
         TxnId t = s[i].txnId.load(std::memory_order_acquire);
@@ -195,8 +195,8 @@ Result<InterprocessLock> InterprocessLock::open(const std::filesystem::path& dat
         hdr->version = kLockFileVersion;
         hdr->slotCount = static_cast<std::uint32_t>(kSharedReaderSlots);
         for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
-            lk.slots()[i].txnId.store(kInvalidTxnId, std::memory_order_relaxed);
-            lk.slots()[i].pid.store(0, std::memory_order_relaxed);
+            lk.readerSlots()[i].txnId.store(kInvalidTxnId, std::memory_order_relaxed);
+            lk.readerSlots()[i].pid.store(0, std::memory_order_relaxed);
         }
     } else if (hdr->magic != kLockFileMagic || hdr->version != kLockFileVersion) {
         lk.reset();
@@ -295,8 +295,8 @@ Result<InterprocessLock> InterprocessLock::open(const std::filesystem::path& dat
         hdr->version = kLockFileVersion;
         hdr->slotCount = static_cast<std::uint32_t>(kSharedReaderSlots);
         for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
-            lk.slots()[i].txnId.store(kInvalidTxnId, std::memory_order_relaxed);
-            lk.slots()[i].pid.store(0, std::memory_order_relaxed);
+            lk.readerSlots()[i].txnId.store(kInvalidTxnId, std::memory_order_relaxed);
+            lk.readerSlots()[i].pid.store(0, std::memory_order_relaxed);
         }
     } else if (hdr->magic != kLockFileMagic || hdr->version != kLockFileVersion) {
         lk.reset();
@@ -357,7 +357,7 @@ ReaderHandle InterprocessLock::registerReader(TxnId snapshotTxnId) {
 #else
     const std::uint64_t myPid = static_cast<std::uint64_t>(::getpid());
 #endif
-    SharedReaderSlot* s = slots();
+    SharedReaderSlot* s = readerSlots();
     for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
         TxnId expected = kInvalidTxnId;
         if (s[i].txnId.compare_exchange_strong(expected, snapshotTxnId,
@@ -375,7 +375,7 @@ ReaderHandle InterprocessLock::registerReader(TxnId snapshotTxnId) {
 void InterprocessLock::unregisterReader(ReaderHandle handle) {
     if (!mapped_ || handle == kInvalidReaderHandle) return;
     if (handle >= kSharedReaderSlots) return;
-    SharedReaderSlot& slot = slots()[handle];
+    SharedReaderSlot& slot = readerSlots()[handle];
     slot.txnId.store(kInvalidTxnId, std::memory_order_release);
     slot.pid.store(0, std::memory_order_release);
 }
@@ -385,7 +385,7 @@ TxnId InterprocessLock::oldestActiveSnapshot(TxnId fallbackIfNoneActive) const {
     clearDeadSlots();
     bool any = false;
     TxnId oldest = kInvalidTxnId;
-    SharedReaderSlot* s = slots();
+    SharedReaderSlot* s = readerSlots();
     for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
         TxnId v = s[i].txnId.load(std::memory_order_acquire);
         if (v == kInvalidTxnId) continue;
@@ -398,7 +398,7 @@ TxnId InterprocessLock::oldestActiveSnapshot(TxnId fallbackIfNoneActive) const {
 std::size_t InterprocessLock::activeReaderCount() const {
     if (!mapped_) return 0;
     std::size_t n = 0;
-    SharedReaderSlot* s = slots();
+    SharedReaderSlot* s = readerSlots();
     for (std::size_t i = 0; i < kSharedReaderSlots; ++i) {
         if (s[i].txnId.load(std::memory_order_relaxed) != kInvalidTxnId) ++n;
     }

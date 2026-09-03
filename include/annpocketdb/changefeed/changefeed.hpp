@@ -67,14 +67,14 @@ public:
     virtual ~IChangeFeed() = default;
     virtual void subscribe(ChangeHandler handler) = 0;
     virtual void unsubscribe() = 0;
-    virtual void emit(const ChangeEvent& event) = 0;
+    virtual void publish(const ChangeEvent& event) = 0;
 };
 
 class InProcessChangeFeed : public IChangeFeed {
 public:
     void subscribe(ChangeHandler handler) override;
     void unsubscribe() override;
-    void emit(const ChangeEvent& event) override;
+    void publish(const ChangeEvent& event) override;
 private:
     mutable std::mutex mutex_;
     ChangeHandler handler_;
@@ -87,7 +87,7 @@ public:
     ~AsyncChangeFeed() override;
     void subscribe(ChangeHandler handler) override;
     void unsubscribe() override;
-    void emit(const ChangeEvent& event) override;
+    void publish(const ChangeEvent& event) override;
 private:
     void run();
     std::mutex mutex_;

@@ -11,6 +11,7 @@ set(ANNPOCKETDB_TEST_SOURCES
   test_nested_txn.cpp
   test_append.cpp
   test_2pc.cpp
+  test_concurrent_readers.cpp
 )
 
 if(ANNPOCKETDB_WITH_SUBDATABASE)
@@ -37,8 +38,22 @@ list(APPEND ANNPOCKETDB_TEST_SOURCES test_document.cpp)
 list(APPEND ANNPOCKETDB_TEST_SOURCES test_crc32c.cpp test_mapped_file.cpp test_node_codec.cpp
                                      test_btree_rebalance.cpp)
 
+# core::kMinPageSize/kMaxPageSize boundaries and long overflow chains through
+# the ordinary Environment/PageManager put/get path -- no feature-module gate
+# needed (pure kernel), but unlike the line above this one does drive
+# PageManager/Environment directly.
+list(APPEND ANNPOCKETDB_TEST_SOURCES test_page_size_edges.cpp)
+
 if(ANNPOCKETDB_WITH_BACKUP)
   list(APPEND ANNPOCKETDB_TEST_SOURCES test_incremental_backup.cpp)
+endif()
+
+# WAL is ON by default (ANNPOCKETDB_WITH_WAL); this is a plain, non-crash
+# commit/reopen/replay smoke test -- the crash-injection counterpart is
+# test_crash_consistency.cpp below, gated separately since it also needs
+# ANNPOCKETDB_WITH_BACKUP for verify()/repair().
+if(ANNPOCKETDB_WITH_WAL)
+  list(APPEND ANNPOCKETDB_TEST_SOURCES test_wal_replay.cpp)
 endif()
 
 if(ANNPOCKETDB_WITH_ENCRYPTION)

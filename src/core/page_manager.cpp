@@ -240,6 +240,15 @@ Result<std::unique_ptr<PageManager>> PageManager::open(const std::filesystem::pa
     Status lockS = pm->writerGate_.open(path, options.readOnly, options.multiProcess, options.maxReaders);
     if (!lockS.ok()) return lockS;
 
+#if defined(ANNPOCKETDB_WITH_ENCRYPTION)
+    // encryptionEnabled_/sha256ChecksumEnabled_ can only be true when this
+    // macro is defined (enforced above), but EncryptionSidecar::open/
+    // ChecksumSidecar::open are direct (non-virtual) calls on concrete
+    // types whose definitions (core/encryption_sidecar.cpp, core/
+    // checksum_sidecar.cpp) only compile in under this same macro -- so the
+    // calls themselves must be preprocessor-guarded too, not just runtime-
+    // guarded, or the linker needs symbols that don't exist when the
+    // feature is off.
     if (pm->encryptionEnabled_) {
         // Opened before loadExistingFile/initializeNewFile: loading an
         // existing encrypted file's free list calls getPage() on data
@@ -251,6 +260,7 @@ Result<std::unique_ptr<PageManager>> PageManager::open(const std::filesystem::pa
         Status csS = pm->checksumSidecar_.open(path, options.readOnly, options.maxDatabaseSize, options.pageSize);
         if (!csS.ok()) return csS;
     }
+#endif
 
     Status s = existedBefore ? pm->loadExistingFile(options) : pm->initializeNewFile(options);
     if (!s.ok()) return s;
@@ -896,6 +906,7 @@ Status PageManager::installRecoveredCommit(TxnId recoveredTxnId, PageId masterRo
 Status PageManager::flushAll(SyncMode mode) {
     Status s = doFlush(mappedFile_, 0, mappedFile_.fileSize(), mode);
     if (!s.ok()) return s;
+#if defined(ANNPOCKETDB_WITH_ENCRYPTION)
     if (encryptionEnabled_) {
         // Same durability barrier as the main file: this is what
         // commit()/finalizePreparedCommit call before WAL checkpoint prunes
@@ -908,6 +919,7 @@ Status PageManager::flushAll(SyncMode mode) {
         Status cs = checksumSidecar_.flush(mode == SyncMode::Durable);
         if (!cs.ok()) return cs;
     }
+#endif
     return Status::OK();
 }
 
@@ -924,6 +936,7 @@ Status PageManager::setMapSize(std::uint64_t newMaxBytes) {
 
 Status PageManager::close() {
     wal_ = nullptr;
+#if defined(ANNPOCKETDB_WITH_ENCRYPTION)
     if (encryptionEnabled_) {
         Status es = encSidecar_.close();
         if (!es.ok()) return es;
@@ -932,6 +945,7 @@ Status PageManager::close() {
         Status cs = checksumSidecar_.close();
         if (!cs.ok()) return cs;
     }
+#endif
     return mappedFile_.close();
 }
 
