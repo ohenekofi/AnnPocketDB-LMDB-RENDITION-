@@ -29,6 +29,7 @@
 #include "annpocketdb/api/sub_database.hpp"
 #include "annpocketdb/btree/cursor.hpp"
 #include "annpocketdb/txn/transaction.hpp"
+#include "annpocketdb/util/path.hpp"
 #include "annpocketdb/util/status.hpp"
 #include "annpocketdb/util/types.hpp"
 
@@ -236,7 +237,18 @@ extern "C" APDB_rc apdb_env_open(const char* path,
             cpp_opts.compressionMinSize = opts->compression_min_size;
     }
 
-    auto result = api::Environment::open(path, cpp_opts);
+    // `path` is UTF-8 on every platform (see annpocketdb.h). Constructing the
+    // path from a plain `const char*` would read it in the ANSI code page on
+    // Windows, so convert explicitly. Ill-formed UTF-8 makes the conversion
+    // throw on Windows; that must not cross the C boundary.
+    std::filesystem::path fsPath;
+    try {
+        fsPath = util::pathFromUtf8(path);
+    } catch (...) {
+        return APDB_INVALID_ARG;
+    }
+
+    auto result = api::Environment::open(fsPath, cpp_opts);
     if (!result) return statusToRc(result.status());
 
     auto* h = new (std::nothrow) APDB_Env_s{std::move(result.value()), {}};

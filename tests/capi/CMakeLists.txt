@@ -19,3 +19,22 @@ add_test(NAME capi_smoke COMMAND test_capi_smoke)
 set_tests_properties(capi_smoke PROPERTIES
   ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR};PATH=$<TARGET_FILE_DIR:annpocketdb_c>;${CMAKE_BINARY_DIR}"
 )
+
+# Unicode (UTF-8) data path through apdb_env_open. C++20 only for
+# std::filesystem checks on the sidecar names; the library is still used
+# solely through the C header.
+if(ANNPOCKETDB_WITH_WAL)
+  add_executable(test_capi_unicode test_capi_unicode.cpp)
+  target_link_libraries(test_capi_unicode PRIVATE AnnPocketDb::c)
+  target_include_directories(test_capi_unicode PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+  )
+  target_compile_features(test_capi_unicode PRIVATE cxx_std_20)
+  if(ANNPOCKETDB_WITH_ENCRYPTION)
+    target_compile_definitions(test_capi_unicode PRIVATE APDB_TEST_WITH_ENCRYPTION=1)
+  endif()
+  add_test(NAME capi_unicode COMMAND test_capi_unicode)
+  set_tests_properties(capi_unicode PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR};PATH=$<TARGET_FILE_DIR:annpocketdb_c>;${CMAKE_BINARY_DIR}"
+  )
+endif()

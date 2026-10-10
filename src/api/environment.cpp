@@ -1,4 +1,5 @@
 #include "annpocketdb/api/environment.hpp"
+#include "annpocketdb/util/path.hpp"
 #include <algorithm>
 #include "annpocketdb/wal/wal.hpp"
 #include "annpocketdb/btree/node_codec.hpp"
@@ -54,7 +55,7 @@ Result<Environment> Environment::open(const std::filesystem::path& path, const E
 #if defined(ANNPOCKETDB_WITH_WAL) && ANNPOCKETDB_WITH_WAL
     if (options.enableWal) {
         std::filesystem::path walPath = options.walPath.empty()
-                                            ? std::filesystem::path(path.string() + ".wal")
+                                            ? util::withSuffix(path, ".wal")
                                             : options.walPath;
         auto walResult = wal::Wal::open(walPath);
         if (!walResult) return walResult.status();

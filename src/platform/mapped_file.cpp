@@ -1,4 +1,5 @@
 #include "annpocketdb/platform/mapped_file.hpp"
+#include "annpocketdb/util/path.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -76,7 +77,7 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, OpenMode 
 
     const int flags = (mode == OpenMode::ReadOnly) ? O_RDONLY : (O_RDWR | O_CREAT);
     int fd = ::open(path.c_str(), flags, 0644);
-    if (fd < 0) return Status::IOError("open(" + path.string() + ") failed: " + std::strerror(errno));
+    if (fd < 0) return Status::IOError("open(" + util::pathToUtf8(path) + ") failed: " + std::strerror(errno));
 
     struct stat st{};
     if (::fstat(fd, &st) != 0) {
@@ -226,7 +227,7 @@ Result<MappedFile> MappedFile::open(const std::filesystem::path& path, OpenMode 
     HANDLE file = CreateFileW(path.c_str(), access, shareMode, nullptr, disposition,
                                FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        return Status::IOError("CreateFile failed for " + path.string() +
+        return Status::IOError("CreateFile failed for " + util::pathToUtf8(path) +
                                " (GetLastError=" + std::to_string(GetLastError()) + ")");
     }
 

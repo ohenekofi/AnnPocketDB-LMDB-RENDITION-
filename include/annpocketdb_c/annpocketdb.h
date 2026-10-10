@@ -134,7 +134,11 @@ typedef struct APDB_EnvOptions {
 /**
  * Open or create a database environment at `path`.
  *
- * @param path     Filesystem path to the database directory / file.
+ * @param path     Filesystem path to the database file, encoded as UTF-8 on
+ *                 every platform (including Windows, where it is NOT read in
+ *                 the ANSI code page). Sidecar files (<path>.wal, .lock,
+ *                 .sha256, .enc) are created next to it under the same name.
+ *                 Ill-formed UTF-8 returns APDB_INVALID_ARG.
  * @param opts     Options (NULL = all defaults).
  * @param env_out  Receives the new environment handle on APDB_OK.
  * @return APDB_OK on success, error code otherwise.

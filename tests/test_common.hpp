@@ -34,8 +34,17 @@ inline std::filesystem::path scratchDbPath(const std::string& name) {
     auto path = dir / name;
     std::error_code ec;
     std::filesystem::remove_all(path, ec);
-    std::filesystem::remove_all(std::filesystem::path(path.string() + ".wal"), ec);
-    std::filesystem::remove(std::filesystem::path(path.string() + ".lock"), ec);
+    // Sidecars derived with path += suffix, never via path.string() (which
+    // narrows through the ANSI code page on Windows -- see util/path.hpp).
+    auto sidecar = [&](const char* suffix) {
+        auto p = path;
+        p += suffix;
+        return p;
+    };
+    std::filesystem::remove_all(sidecar(".wal"), ec);
+    std::filesystem::remove(sidecar(".lock"), ec);
+    std::filesystem::remove(sidecar(".sha256"), ec);
+    std::filesystem::remove(sidecar(".enc"), ec);
     return path;
 }
 

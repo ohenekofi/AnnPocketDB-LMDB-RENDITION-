@@ -12,6 +12,7 @@
 #include "annpocketdb/core/page.hpp"
 #include "annpocketdb/core/page_manager.hpp"
 #include "annpocketdb/util/bounded_walk.hpp"
+#include "annpocketdb/util/path.hpp"
 
 namespace annpocketdb::backup {
 
@@ -369,7 +370,7 @@ Result<DumpReport> dumpToFile(api::Environment& env, const std::filesystem::path
     txn::ReadTransaction& txn = txnR.value();
 
     std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
-    if (!out) return Status::IOError("cannot open dump output: " + outPath.string());
+    if (!out) return Status::IOError("cannot open dump output: " + util::pathToUtf8(outPath));
 
     out.write(kDumpMagic, 8);
     writeU32(out, kDumpVersion);
@@ -438,11 +439,11 @@ Result<LoadReport> loadFromFile(const std::filesystem::path& dumpPath,
     if (std::filesystem::exists(dbPath) && options.forceOverwrite) {
         std::error_code ec;
         std::filesystem::remove(dbPath, ec);
-        std::filesystem::remove(dbPath.string() + ".lock", ec);
+        std::filesystem::remove(util::withSuffix(dbPath, ".lock"), ec);
     }
 
     std::ifstream in(dumpPath, std::ios::binary);
-    if (!in) return Status::IOError("cannot open dump: " + dumpPath.string());
+    if (!in) return Status::IOError("cannot open dump: " + util::pathToUtf8(dumpPath));
 
     char magic[8];
     if (!readExact(in, magic, 8) || std::memcmp(magic, kDumpMagic, 8) != 0) {
@@ -519,7 +520,7 @@ Result<IncrementalDumpReport> incrementalDumpToFile(api::Environment& env, TxnId
     } guard{pm, handle};
 
     std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
-    if (!out) return Status::IOError("cannot open incremental dump output: " + outPath.string());
+    if (!out) return Status::IOError("cannot open incremental dump output: " + util::pathToUtf8(outPath));
 
     out.write(kIncMagic, 8);
     writeU32(out, kIncVersion);
@@ -549,7 +550,7 @@ Result<IncrementalLoadReport> incrementalLoadFromFile(const std::filesystem::pat
                                                       const std::filesystem::path& dbPath,
                                                       const IncrementalLoadOptions& options) {
     std::ifstream in(dumpPath, std::ios::binary);
-    if (!in) return Status::IOError("cannot open incremental dump: " + dumpPath.string());
+    if (!in) return Status::IOError("cannot open incremental dump: " + util::pathToUtf8(dumpPath));
 
     char magic[8];
     if (!readExact(in, magic, 8) || std::memcmp(magic, kIncMagic, 8) != 0) {
@@ -568,7 +569,7 @@ Result<IncrementalLoadReport> incrementalLoadFromFile(const std::filesystem::pat
     if (!std::filesystem::exists(dbPath)) {
         return Status::InvalidArgument(
             "incremental load target must already exist at the exact prior baseline: " +
-            dbPath.string());
+            util::pathToUtf8(dbPath));
     }
 
     api::EnvironmentOptions envOpts;
@@ -660,7 +661,7 @@ Result<RepairReport> repair(const std::filesystem::path& source,
     if (std::filesystem::exists(dest) && options.forceOverwrite) {
         std::error_code ec;
         std::filesystem::remove(dest, ec);
-        std::filesystem::remove(dest.string() + ".lock", ec);
+        std::filesystem::remove(util::withSuffix(dest, ".lock"), ec);
     }
 
     api::EnvironmentOptions srcOpts;

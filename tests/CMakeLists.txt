@@ -88,6 +88,13 @@ if(ANNPOCKETDB_WITH_SUBDATABASE AND ANNPOCKETDB_WITH_BACKUP)
   list(APPEND ANNPOCKETDB_TEST_SOURCES test_env_extras.cpp)
 endif()
 
+# Non-ASCII data paths end to end (sidecars, backup/dump/repair, error
+# messages, WAL dir scan). Encryption/SHA-256 sidecars are covered too when
+# ANNPOCKETDB_WITH_ENCRYPTION is on (the sanitizer jobs build it).
+if(ANNPOCKETDB_WITH_WAL AND ANNPOCKETDB_WITH_BLOB AND ANNPOCKETDB_WITH_BACKUP)
+  list(APPEND ANNPOCKETDB_TEST_SOURCES test_unicode_paths.cpp)
+endif()
+
 foreach(test_src ${ANNPOCKETDB_TEST_SOURCES})
   get_filename_component(test_name ${test_src} NAME_WE)
   add_executable(${test_name} ${test_src})

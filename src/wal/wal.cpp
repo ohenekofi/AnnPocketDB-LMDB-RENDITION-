@@ -1,4 +1,5 @@
 #include "annpocketdb/wal/wal.hpp"
+#include "annpocketdb/util/path.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -290,7 +291,7 @@ Status Wal::discoverSegments() {
         if (ec) return Status::IOError("wal readdir: " + ec.message());
         if (!ent.is_regular_file()) continue;
         std::uint64_t id = 0;
-        if (!parseSegmentFileName(ent.path().filename().string(), id)) continue;
+        if (!parseSegmentFileName(util::pathToUtf8(ent.path().filename()), id)) continue;
         Segment seg;
         seg.id = id;
         seg.path = ent.path();
