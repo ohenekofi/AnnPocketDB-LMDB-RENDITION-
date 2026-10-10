@@ -421,6 +421,8 @@ Status Wal::logPageImage(PageId pageId, const core::PageHeader* header, ByteView
     rec.type = header->type;
     rec.payloadSize = header->payloadSize;
     rec.itemCount = header->itemCount;
+    rec.flags = header->flags;
+    rec.overflowNext = header->overflowNext;
     rec.payload.assign(payload.begin(), payload.end());
     Status s = encodePageImage(rec, static_cast<std::uint32_t>(sizeof(core::PageHeader) + payload.size()),
                                writeBuffer_);
@@ -702,9 +704,10 @@ Result<RecoveryResult> Wal::recover(core::PageManager& pm) {
         if (applied > limit) break;
 
         switch (type) {
-            case RecordType::PageImage: {
+            case RecordType::PageImage:
+            case RecordType::PageImageV2: {
                 PageImageRecord rec;
-                Status s = decodePageImage(ByteView(body.data(), body.size()), pm.pageSize(), rec);
+                Status s = decodePageImage(ByteView(body.data(), body.size()), type, pm.pageSize(), rec);
                 if (!s.ok()) {
                     pm.setRecoveryMode(false);
                     return s;
@@ -720,6 +723,12 @@ Result<RecoveryResult> Wal::recover(core::PageManager& pm) {
                 header->type = rec.type;
                 header->payloadSize = rec.payloadSize;
                 header->itemCount = rec.itemCount;
+                // writePageAt reset these. Restoring overflowNext is what
+                // keeps a multi-page overflow chain linked after replay; a
+                // legacy PageImage record has neither, so it decodes to the
+                // old (chain-cutting) defaults.
+                header->flags = rec.flags;
+                header->overflowNext = rec.overflowNext;
                 const std::size_t copyLen =
                     std::min(rec.payload.size(), core::payloadCapacity(pm.pageSize()));
                 std::memcpy(core::PageManager::payload(header), rec.payload.data(), copyLen);

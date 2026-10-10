@@ -282,5 +282,59 @@ int main() {
         CHECK_OK(env.close());
     }
 
+    // ---- 6. Multi-page overflow chains survive replay. Every reopen
+    // replays the WAL up to the last commit, and the PageImage record used
+    // to carry no PageHeader::overflowNext -- so replay rewrote every logged
+    // overflow page as end-of-chain, and any value spanning more than one
+    // page (B-tree large values, blobs) was cut to its first page on disk.
+    // Cases 1-5 only ever used ~7-byte values, which is why they never saw
+    // it. Reopened twice so replay runs over already-replayed pages too. ----
+    {
+        auto path = anntest::scratchDbPath("wal_replay_overflow_chain.apdb");
+        auto bigValue = [](int i) {
+            std::string v(12000 + i * 1000, '\0');  // ~3-4 pages each at 4 KiB
+            for (std::size_t j = 0; j < v.size(); ++j) v[j] = static_cast<char>('a' + (j * 7 + i) % 26);
+            return v;
+        };
+        constexpr int kBig = 3;
+        ByteBuffer blob(20000);
+        for (std::size_t j = 0; j < blob.size(); ++j) blob[j] = static_cast<std::byte>((j * 13) % 251);
+
+        {
+            EnvironmentOptions opts;
+            opts.enableWal = true;
+            auto envR = Environment::open(path, opts);
+            CHECK(envR.ok());
+            if (!envR) TEST_MAIN_END();
+            Environment env = envR.moveValue();
+            for (int i = 0; i < kBig; ++i) {
+                CHECK_OK(env.put(toByteView(keyFor(i)), toByteView(bigValue(i))));
+            }
+#if defined(ANNPOCKETDB_WITH_BLOB)
+            CHECK(env.putBlob(toByteView(std::string("blob")), toByteView(blob)).ok());
+#endif
+            CHECK_OK(env.close());
+        }
+        for (int round = 0; round < 2; ++round) {
+            EnvironmentOptions opts;
+            opts.enableWal = true;
+            auto envR = Environment::open(path, opts);
+            CHECK(envR.ok());
+            if (!envR) TEST_MAIN_END();
+            Environment env = envR.moveValue();
+            for (int i = 0; i < kBig; ++i) {
+                auto v = env.get(toByteView(keyFor(i)));
+                CHECK_OK(v.status());
+                if (v.ok()) CHECK(toStringView(toByteView(v.value())) == bigValue(i));
+            }
+#if defined(ANNPOCKETDB_WITH_BLOB)
+            auto b = env.getBlob(toByteView(std::string("blob")));
+            CHECK_OK(b.status());
+            if (b.ok()) CHECK(b.value() == blob);
+#endif
+            CHECK_OK(env.close());
+        }
+    }
+
     TEST_MAIN_END();
 }
