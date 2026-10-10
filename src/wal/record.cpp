@@ -35,18 +35,25 @@ Status encodeGeneric(RecordType type, ByteView body, ByteBuffer& out) {
 }
 }  // namespace
 
+// PageImage (legacy) body:  pageId u64 | type u32 | payloadSize u32 | itemCount u16 | payload
+// PageImageV2 body:         same 18-byte prefix | flags u16 | overflowNext u64 | payload
+constexpr std::size_t kPageImageV1Prefix = 8 + 4 + 4 + 2;
+constexpr std::size_t kPageImageV2Prefix = kPageImageV1Prefix + 2 + 8;
+
 Status encodePageImage(const PageImageRecord& rec, std::uint32_t pageSize, ByteBuffer& out) {
     std::size_t payloadCapacity = pageSize - sizeof(core::PageHeader);
     ByteBuffer body;
-    body.reserve(8 + 4 + 4 + 2 + payloadCapacity);
-    body.resize(8 + 4 + 4 + 2);
+    body.reserve(kPageImageV2Prefix + payloadCapacity);
+    body.resize(kPageImageV2Prefix);
     std::byte* p = body.data();
     writeU64(p, rec.pageId);
     writeU32(p + 8, static_cast<std::uint32_t>(rec.type));
     writeU32(p + 12, rec.payloadSize);
     writeU16(p + 16, rec.itemCount);
+    writeU16(p + 18, rec.flags);
+    writeU64(p + 20, rec.overflowNext);
     body.insert(body.end(), rec.payload.begin(), rec.payload.end());
-    return encodeGeneric(RecordType::PageImage, ByteView(body.data(), body.size()), out);
+    return encodeGeneric(RecordType::PageImageV2, ByteView(body.data(), body.size()), out);
 }
 
 Status encodeFreeListUpdate(const FreeListUpdateRecord& rec, ByteBuffer& out) {
@@ -100,16 +107,26 @@ Result<ByteView> validateRecordHeader(ByteView data, RecordType& outType) {
     return Result<ByteView>(body);
 }
 
-Status decodePageImage(ByteView src, std::uint32_t pageSize, PageImageRecord& out) {
-    if (src.size() < 18) return Status::Corruption("PageImage record too short");
+Status decodePageImage(ByteView src, RecordType type, std::uint32_t pageSize, PageImageRecord& out) {
+    const bool v2 = (type == RecordType::PageImageV2);
+    if (!v2 && type != RecordType::PageImage) return Status::InvalidArgument("not a PageImage record");
+    const std::size_t prefix = v2 ? kPageImageV2Prefix : kPageImageV1Prefix;
+    if (src.size() < prefix) return Status::Corruption("PageImage record too short");
     out.pageId = readU64(src.data());
     out.type = static_cast<core::PageType>(readU32(src.data() + 8));
     out.payloadSize = readU32(src.data() + 12);
     out.itemCount = readU16(src.data() + 16);
+    if (v2) {
+        out.flags = readU16(src.data() + 18);
+        out.overflowNext = readU64(src.data() + 20);
+    } else {
+        out.flags = 0;
+        out.overflowNext = kInvalidPageId;
+    }
     std::size_t payloadCapacity = pageSize - sizeof(core::PageHeader);
-    if (src.size() < 18 + payloadCapacity) return Status::Corruption("PageImage payload truncated");
+    if (src.size() < prefix + payloadCapacity) return Status::Corruption("PageImage payload truncated");
     out.payload.resize(payloadCapacity);
-    std::memcpy(out.payload.data(), src.data() + 18, payloadCapacity);
+    std::memcpy(out.payload.data(), src.data() + prefix, payloadCapacity);
     return Status::OK();
 }
 

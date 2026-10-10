@@ -2,6 +2,65 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+#### Fix: non-ASCII data paths on Windows (sidecar files, errors, C API)
+
+Several places turned the data path into a narrow `std::string` with
+`path.string()` and built new paths from it. On Windows that conversion goes
+through the ANSI code page, so for a data folder such as
+`C:\Users\Kwabena Ọbẹ\AppData\...` the `.wal`, `.lock`, `.sha256` and `.enc`
+sidecars pointed at a different (mangled) file, or the conversion threw
+`std::system_error` out of an API that returns `Status`. Linux and macOS were
+not affected (`string()` is UTF-8 there), and behaviour there is unchanged.
+
+- Every path now stays a `std::filesystem::path` down to the OS call. Sidecar
+  paths are derived with the new `util::withSuffix()` (`path +=`), never via
+  `std::string` (`environment.cpp`, `interprocess_lock.cpp`,
+  `checksum_sidecar.cpp`, `encryption_sidecar.cpp`, and the `forceOverwrite`
+  `.lock` cleanup in `loadFromFile` / `repair`).
+- `Status` messages that include a path use `util::pathToUtf8()`: always
+  UTF-8 and never throws (`backup.cpp`, `mapped_file.cpp`).
+- The WAL segment scan no longer throws on a non-ASCII file in the WAL
+  directory; such files are skipped.
+- C API: `apdb_env_open`'s `path` is now defined as **UTF-8 on every
+  platform** and converted explicitly (it was read as ANSI on Windows).
+  Ill-formed UTF-8 returns `APDB_INVALID_ARG`. The Python, Dart and Go
+  bindings already pass UTF-8, so they now work with Unicode paths on Windows
+  too.
+- `apdb` CLI: on Windows, arguments are read as UTF-16
+  (`GetCommandLineW` + `CommandLineToArgvW`), and the console output code page
+  is set to UTF-8 while the tool runs.
+- On-disk formats and file names are unchanged.
+
+New tests: `test_unicode_paths` (sidecars, backup/dump/load/repair/compact
+copy, error messages, WAL directory scan) and `capi_unicode`.
+
+#### Fix: WAL replay cut multi-page overflow chains (blobs, large values, free list)
+
+The WAL `PageImage` record stored a page's type, payload size, item count and
+payload, but not `PageHeader::overflowNext` (or `flags`). Replay rebuilds each
+logged page from a zeroed header, so every logged overflow page came back as
+end-of-chain. Since recovery replays up to the last commit on *every*
+WAL-enabled open, not just after a crash, a clean close + reopen truncated any
+B-tree value or blob spanning more than one page (and multi-page free-list
+chains) to its first page on disk. Values that fit in one page were
+unaffected, which is why the existing WAL tests (7–9 byte values) never caught
+it; `test_unicode_paths` (WAL + a 20 KB blob) did.
+
+- New record type `PageImageV2` (= 5) carries `flags` and `overflowNext`;
+  `logPageImage` writes only V2, and replay restores both fields.
+- Legacy `PageImage` (= 1) records are still decoded, so a WAL left behind by
+  an older build is replayed exactly as before. The data-file format is
+  unchanged.
+- **Downgrade note:** an older build reading a WAL written by this one skips
+  the unknown V2 records instead of replaying them. Close cleanly (so the data
+  file is current) before downgrading.
+- `test_wal_replay` case 6: multi-page B-tree values and a multi-page blob
+  survive two clean reopens.
+
 ## [0.1.1] - 2026-09-03
 
 ### Fixed

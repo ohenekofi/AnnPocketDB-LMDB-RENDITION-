@@ -1,4 +1,5 @@
 #include "annpocketdb/platform/interprocess_lock.hpp"
+#include "annpocketdb/util/path.hpp"
 
 #include <cstring>
 #include <string>
@@ -20,7 +21,7 @@ namespace annpocketdb::platform {
 
 namespace {
 std::filesystem::path lockPathFor(const std::filesystem::path& dataPath) {
-    return dataPath.string() + ".lock";
+    return util::withSuffix(dataPath, ".lock");
 }
 }  // namespace
 

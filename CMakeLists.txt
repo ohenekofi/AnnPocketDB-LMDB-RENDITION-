@@ -306,6 +306,10 @@ if(ANNPOCKETDB_WITH_BACKUP)
   add_executable(apdb tools/apdb.cpp)
   target_link_libraries(apdb PRIVATE AnnPocketDb::features AnnPocketDb::kernel)
   target_compile_options(apdb PRIVATE ${ANNPOCKETDB_WARN_FLAGS})
+  if(WIN32)
+    # CommandLineToArgvW, for Unicode (UTF-16) command-line paths
+    target_link_libraries(apdb PRIVATE shell32)
+  endif()
   install(TARGETS apdb RUNTIME DESTINATION bin)
 endif()
 

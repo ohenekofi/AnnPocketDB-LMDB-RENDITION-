@@ -1,4 +1,5 @@
 #include "annpocketdb/core/encryption_sidecar.hpp"
+#include "annpocketdb/util/path.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -7,7 +8,7 @@ namespace annpocketdb::core {
 
 Status EncryptionSidecar::open(const std::filesystem::path& dataPath, bool readOnly,
                                std::uint64_t maxDatabaseSize, std::uint32_t pageSize) {
-    std::filesystem::path sidecarPath = dataPath.string() + ".enc";
+    std::filesystem::path sidecarPath = util::withSuffix(dataPath, ".enc");
 
     // Proportional virtual reservation: one kRecordSize-byte slot per
     // pageSize-byte page slot the main file could ever reach.

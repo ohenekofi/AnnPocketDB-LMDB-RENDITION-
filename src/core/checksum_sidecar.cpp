@@ -1,4 +1,5 @@
 #include "annpocketdb/core/checksum_sidecar.hpp"
+#include "annpocketdb/util/path.hpp"
 
 #include <cstring>
 
@@ -6,7 +7,7 @@ namespace annpocketdb::core {
 
 Status ChecksumSidecar::open(const std::filesystem::path& dataPath, bool readOnly,
                              std::uint64_t maxDatabaseSize, std::uint32_t pageSize) {
-    std::filesystem::path sidecarPath = dataPath.string() + ".sha256";
+    std::filesystem::path sidecarPath = util::withSuffix(dataPath, ".sha256");
     std::uint64_t maxRecords = (maxDatabaseSize + pageSize - 1) / pageSize;
     std::uint64_t maxSidecarBytes = maxRecords * kRecordSize;
 
